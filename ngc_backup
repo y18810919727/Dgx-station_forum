@@ -1,0 +1,56 @@
+# 镜像定期备份脚本
+# 将该脚本添加到crontab命令中实现定时启动，如:
+# 0 0 * * * /root/ngc_backup.sh
+# 该命令可以让工作站每天0点执行一次备份
+ 
+
+# 宿主机文件路径
+DATA_DIR="/home/jupyter_data"
+# 容器内文件路径
+JUPYTER_DIR="/code"
+ 
+# 查找该由该image产生的最新的容器，可以自定义grep规则，我这里是用jupyter端口
+ngctorchid=`docker ps | grep '9909' | awk '{print $1}'`
+ 
+set -e
+ 
+ 
+if [ -z $ngctorchid ]; then
+ 
+  # 说明容器不存在，使用最新image创建新容器
+  echo 'The ngctorch docker is not running, can not backup.'
+  # 查找最新image
+  latest_backup=`docker images | grep 'ngctorch' | awk '{print $3}' | head -n 1`
+ 
+  echo 'Trying to back it online... from' $latest_backup
+ 
+  # 创建容器
+  # 主机端口    |   容器端口    |   备注
+  # 9909    |   8888    |   用于浏览器访问jupyter
+  # 8422    |   22      |   用于ssh直接进入容器，可以使用pycharm远程解释器
+  # xxx     |   xxx     |   按照自己需求可配置其他端口映射
+ 
+  nvidia-docker run --rm  -it -p 9909:8888 -p 8422:22  -v $DATA_DIR:$JUPYTER_DIR $latest_backup
+  echo 'Done.'
+  exit 0
+fi
+ 
+# 容器正在运行，将当前容器备份为新镜像
+docker commit $ngctorchid "ngctorch-backup:$(date +%m%d-%H%M)"
+ 
+# 删除旧镜像
+
+# 存档镜像数量设定为1，除了当前最新的镜像，其他全部删除（当前镜像的祖先节点不会被删除）
+MAX_BACKUP_NUM=1
+
+backupid=`docker images | grep 'ngctorch' | awk '{print $3}'`
+backupnum=`echo $backupid | wc -w`
+echo $backupid
+echo $backupnum
+if [ $backupnum -gt $MAX_BACKUP_NUM ]; then
+  echo 'Delete old backup...'
+  echo $backupid | tr ' ' '\n' | tail -n $(expr $backupnum - $MAX_BACKUP_NUM)
+  echo $backupid | tr ' ' '\n' | tail -n $(expr $backupnum - $MAX_BACKUP_NUM) | xargs docker rmi
+fi
+ 
+echo 'Done.'
